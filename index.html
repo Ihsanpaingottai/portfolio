@@ -307,6 +307,50 @@
   .feature-play .play-btn{ color:#fff; border-color:#fff; }
   .feature-play .play-btn::after{ border-left-color:#fff; }
 
+
+  /* ---------- Synced comparison ---------- */
+  .compare-stage{
+    position:relative; display:grid; grid-template-columns:1fr 1fr; gap:6px;
+    background:#000; border-radius:4px; overflow:hidden;
+    max-width:calc(75vh * var(--cmp-num, 1.7778) * 2 + 6px); margin:0 auto;
+  }
+  .compare-pane{ position:relative; }
+  .compare-frame{
+    position:relative; width:100%; aspect-ratio:var(--cmp-ratio, 16 / 9);
+    background-color:#0a0a0c; background-size:cover; background-position:center;
+  }
+  .compare-frame iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .compare-label{
+    position:absolute; top:10px; left:10px; z-index:3;
+    font-family:var(--font-mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+    padding:4px 9px; border-radius:2px; background:rgba(0,0,0,.65); color:#fff;
+  }
+  .compare-label.ai{ background:var(--amber); color:#111; }
+  .compare-overlay{
+    position:absolute; inset:0; z-index:4; border:0; background:transparent; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .compare-overlay .play-btn{ color:#fff; border-color:#fff; opacity:0; transition:opacity .2s ease, transform .25s ease; }
+  .compare-overlay .play-btn::after{ border-left-color:#fff; }
+  .compare-stage.is-paused .compare-overlay{ background:rgba(0,0,0,.25); }
+  .compare-stage.is-paused .compare-overlay .play-btn{ opacity:1; }
+  .compare-overlay:hover .play-btn{ transform:scale(1.08); border-color:var(--amber); }
+  .compare-overlay:hover .play-btn::after{ border-left-color:var(--amber); }
+  .compare-controls{ display:flex; align-items:center; gap:14px; margin-top:16px; }
+  .cmp-btn{
+    font-family:var(--font-mono); font-size:12px; letter-spacing:.05em; text-transform:uppercase;
+    padding:10px 16px; border:1px solid var(--line); border-radius:4px; background:transparent;
+    color:var(--text); cursor:pointer; min-width:92px; transition:border-color .2s ease;
+  }
+  .cmp-btn:hover{ border-color:var(--amber); }
+  .cmp-seek{ flex:1; accent-color:var(--amber); cursor:pointer; min-width:0; }
+  .cmp-time{ font-family:var(--font-mono); font-size:12px; color:var(--text-dim); white-space:nowrap; }
+  @media (max-width:860px){
+    .compare-stage{ grid-template-columns:1fr; max-width:none; }
+    .compare-controls{ flex-wrap:wrap; }
+    .cmp-seek{ order:3; flex-basis:100%; }
+  }
+
   .work-note{
     margin-top:30px; font-family:var(--font-mono); font-size:12px; color:var(--text-faint);
     border-left:2px solid var(--line); padding-left:14px; max-width:640px;
@@ -479,11 +523,32 @@
         </div>
       </div>
 
-      <div class="work-card empty reveal" data-vimeo-id="">
-        <div class="frame"><div class="play-btn"></div></div>
-        <div class="work-info">
-          <div><h3>E-Commerce Campaign Cut</h3><div class="tag">Nika Online — Video Edit</div></div>
-          <div class="yr">2023</div>
+      <!-- SYNCED COMPARISON: original vs AI outfit change, one play button + one timeline -->
+      <div class="work-feature compare reveal" id="compare">
+        <div class="feature-head">
+          <div>
+            <h3>AI Outfit Change</h3>
+            <div class="tag">Original vs AI-edited — synced playback</div>
+          </div>
+        </div>
+        <div class="compare-stage is-paused" id="cmpStage">
+          <div class="compare-pane">
+            <span class="compare-label">Original</span>
+            <div class="compare-frame" id="cmpOrig"></div>
+          </div>
+          <div class="compare-pane">
+            <span class="compare-label ai">AI Edited</span>
+            <div class="compare-frame" id="cmpAi"></div>
+          </div>
+          <button class="compare-overlay" id="cmpOverlay" type="button" aria-label="Play or pause both videos">
+            <div class="play-btn"></div>
+          </button>
+        </div>
+        <div class="compare-controls">
+          <button class="cmp-btn" id="cmpPlay" type="button">Play</button>
+          <input class="cmp-seek" id="cmpSeek" type="range" min="0" max="100" step="0.05" value="0" aria-label="Timeline">
+          <span class="cmp-time" id="cmpTime">0:00 / 0:00</span>
+          <button class="cmp-btn" id="cmpSound" type="button">Sound: On</button>
         </div>
       </div>
 
@@ -611,6 +676,7 @@
     <div>Video Editor & Motion Graphics</div>
   </footer>
 
+<script src="https://player.vimeo.com/api/player.js"></script>
 <script>
   // Scroll progress scrubber + timecode readout
   const fill = document.getElementById('scrubberFill');
@@ -707,6 +773,123 @@
     }));
     bindPlay();
     loadPoster(currentId);
+  })();
+
+
+  // Synced comparison: one play button + one timeline controlling two Vimeo players
+  (function(){
+    const IDS = { orig:'1234139642', ai:'1234139639' };
+    const stage = document.getElementById('cmpStage');
+    if(!stage) return;
+    const boxes = { orig:document.getElementById('cmpOrig'), ai:document.getElementById('cmpAi') };
+    const overlay = document.getElementById('cmpOverlay');
+    const playBtn = document.getElementById('cmpPlay');
+    const seek = document.getElementById('cmpSeek');
+    const timeEl = document.getElementById('cmpTime');
+    const soundBtn = document.getElementById('cmpSound');
+    let pO, pA, duration = 0, started = false, playing = false, seeking = false, soundOn = true, busy = false;
+
+    const fmt = s => Math.floor(s/60) + ':' + String(Math.floor(s%60)).padStart(2,'0');
+    const src = id => `https://player.vimeo.com/video/${id}?title=0&byline=0&portrait=0&dnt=1&controls=0&playsinline=1`;
+
+    // Poster images + real aspect ratio from Vimeo
+    ['orig','ai'].forEach(k => {
+      fetch('https://vimeo.com/api/oembed.json?url=' + encodeURIComponent('https://vimeo.com/' + IDS[k]))
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if(!d) return;
+          if(d.thumbnail_url && !started) boxes[k].style.backgroundImage = `url(${d.thumbnail_url.replace(/_\d+x\d+/, '_1280')})`;
+          if(k === 'orig' && d.width && d.height){
+            stage.style.setProperty('--cmp-ratio', d.width + ' / ' + d.height);
+            stage.style.setProperty('--cmp-num', d.width / d.height);
+          }
+        }).catch(() => {});
+    });
+
+    function ui(){
+      stage.classList.toggle('is-paused', !playing);
+      playBtn.textContent = playing ? 'Pause' : 'Play';
+      soundBtn.textContent = 'Sound: ' + (soundOn ? 'On' : 'Off');
+    }
+
+    async function startBoth(){
+      const t = await pO.getCurrentTime();
+      await pA.setCurrentTime(t);
+      try{
+        await Promise.all([pO.play(), pA.play()]);
+      }catch(err){
+        // Browser blocked sound autoplay: fall back to muted playback
+        soundOn = false;
+        await pO.setVolume(0);
+        await Promise.all([pO.play(), pA.play()]);
+      }
+      playing = true;
+      ui();
+    }
+
+    async function init(){
+      started = true; busy = true;
+      timeEl.textContent = 'Loading…';
+      boxes.orig.innerHTML = `<iframe src="${src(IDS.orig)}" allow="autoplay; fullscreen; picture-in-picture"></iframe>`;
+      boxes.ai.innerHTML   = `<iframe src="${src(IDS.ai)}" allow="autoplay; fullscreen; picture-in-picture"></iframe>`;
+      pO = new Vimeo.Player(boxes.orig.querySelector('iframe'));
+      pA = new Vimeo.Player(boxes.ai.querySelector('iframe'));
+      await Promise.all([pO.ready(), pA.ready()]);
+      duration = await pO.getDuration();
+      seek.max = duration;
+      timeEl.textContent = '0:00 / ' + fmt(duration);
+      await pA.setVolume(0);   // only the original carries sound
+
+      pO.on('timeupdate', async d => {
+        if(!seeking){ seek.value = d.seconds; timeEl.textContent = fmt(d.seconds) + ' / ' + fmt(duration); }
+        if(!playing) return;
+        const t = await pA.getCurrentTime();
+        if(Math.abs(t - d.seconds) > 0.25) pA.setCurrentTime(d.seconds);
+      });
+      pO.on('ended', () => { playing = false; pA.pause(); ui(); });
+      // If either video stalls to buffer, hold the other so they stay together
+      pO.on('bufferstart', () => { if(playing) pA.pause(); });
+      pO.on('bufferend',   () => { if(playing) pA.play(); });
+      pA.on('bufferstart', () => { if(playing) pO.pause(); });
+      pA.on('bufferend',   () => { if(playing) pO.play(); });
+
+      await startBoth();
+      busy = false;
+    }
+
+    async function toggle(){
+      if(busy) return;
+      if(!started){ await init(); return; }
+      busy = true;
+      if(playing){
+        playing = false;
+        await Promise.all([pO.pause(), pA.pause()]);
+        ui();
+      } else {
+        await startBoth();
+      }
+      busy = false;
+    }
+
+    overlay.addEventListener('click', toggle);
+    playBtn.addEventListener('click', toggle);
+
+    seek.addEventListener('input', () => {
+      seeking = true;
+      timeEl.textContent = fmt(+seek.value) + ' / ' + fmt(duration);
+    });
+    seek.addEventListener('change', async () => {
+      if(started){ const t = +seek.value; await Promise.all([pO.setCurrentTime(t), pA.setCurrentTime(t)]); }
+      seeking = false;
+    });
+
+    soundBtn.addEventListener('click', async () => {
+      soundOn = !soundOn;
+      if(started) await pO.setVolume(soundOn ? 1 : 0);
+      ui();
+    });
+
+    ui();
   })();
 
   document.getElementById('year').textContent = new Date().getFullYear();
