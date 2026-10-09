@@ -787,7 +787,7 @@
     const seek = document.getElementById('cmpSeek');
     const timeEl = document.getElementById('cmpTime');
     const soundBtn = document.getElementById('cmpSound');
-    let pO, pA, duration = 0, started = false, playing = false, seeking = false, soundOn = true, busy = false;
+    let pO, pA, setupP = null, duration = 0, playing = false, seeking = false, soundOn = true, busy = false;
 
     const fmt = s => Math.floor(s/60) + ':' + String(Math.floor(s%60)).padStart(2,'0');
     const src = id => `https://player.vimeo.com/video/${id}?title=0&byline=0&portrait=0&dnt=1&controls=0&playsinline=1`;
@@ -798,7 +798,7 @@
         .then(r => r.ok ? r.json() : null)
         .then(d => {
           if(!d) return;
-          if(d.thumbnail_url && !started) boxes[k].style.backgroundImage = `url(${d.thumbnail_url.replace(/_\d+x\d+/, '_1280')})`;
+          if(d.thumbnail_url) boxes[k].style.backgroundImage = `url(${d.thumbnail_url.replace(/_\d+x\d+/, '_1280')})`;
           if(k === 'orig' && d.width && d.height){
             stage.style.setProperty('--cmp-ratio', d.width + ' / ' + d.height);
             stage.style.setProperty('--cmp-num', d.width / d.height);
@@ -812,13 +812,60 @@
       soundBtn.textContent = 'Sound: ' + (soundOn ? 'On' : 'Off');
     }
 
+    function showError(err){
+      const name = (err && err.name) || 'Error';
+      timeEl.textContent = name === 'PrivacyError'
+        ? 'Blocked: allow this domain in Vimeo embed settings'
+        : 'Could not play (' + name + ')';
+      console.error('Comparison player error:', err);
+    }
+
+    // Create both players ahead of the click, so play() runs straight from the user's click
+    function setup(){
+      if(setupP) return setupP;
+      setupP = (async () => {
+        timeEl.textContent = 'Loading…';
+        boxes.orig.innerHTML = `<iframe src="${src(IDS.orig)}" allow="autoplay; fullscreen; picture-in-picture"></iframe>`;
+        boxes.ai.innerHTML   = `<iframe src="${src(IDS.ai)}" allow="autoplay; fullscreen; picture-in-picture"></iframe>`;
+        pO = new Vimeo.Player(boxes.orig.querySelector('iframe'));
+        pA = new Vimeo.Player(boxes.ai.querySelector('iframe'));
+        await Promise.all([pO.ready(), pA.ready()]);
+        duration = await pO.getDuration();
+        seek.max = duration;
+        timeEl.textContent = '0:00 / ' + fmt(duration);
+        await pA.setVolume(0);   // only the original carries sound
+
+        pO.on('timeupdate', async d => {
+          if(!seeking){ seek.value = d.seconds; timeEl.textContent = fmt(d.seconds) + ' / ' + fmt(duration); }
+          if(!playing) return;
+          try{
+            const t = await pA.getCurrentTime();
+            if(Math.abs(t - d.seconds) > 0.25) pA.setCurrentTime(d.seconds);
+          }catch(e){}
+        });
+        pO.on('ended', () => { playing = false; pA.pause().catch(()=>{}); ui(); });
+        pO.on('bufferstart', () => { if(playing) pA.pause().catch(()=>{}); });
+        pO.on('bufferend',   () => { if(playing) pA.play().catch(()=>{}); });
+        pA.on('bufferstart', () => { if(playing) pO.pause().catch(()=>{}); });
+        pA.on('bufferend',   () => { if(playing) pO.play().catch(()=>{}); });
+      })();
+      setupP.catch(err => { setupP = null; showError(err); });
+      return setupP;
+    }
+
+    // Start loading when the section is near the screen
+    new IntersectionObserver((entries, obs) => {
+      if(entries.some(en => en.isIntersecting)){ obs.disconnect(); setup(); }
+    }, { rootMargin:'400px' }).observe(stage);
+
     async function startBoth(){
       const t = await pO.getCurrentTime();
-      await pA.setCurrentTime(t);
+      if(t > 0) await pA.setCurrentTime(t);
       try{
         await Promise.all([pO.play(), pA.play()]);
       }catch(err){
-        // Browser blocked sound autoplay: fall back to muted playback
+        if(err && err.name === 'PrivacyError') throw err;
+        // Sound autoplay blocked: retry muted
         soundOn = false;
         await pO.setVolume(0);
         await Promise.all([pO.play(), pA.play()]);
@@ -827,48 +874,23 @@
       ui();
     }
 
-    async function init(){
-      started = true; busy = true;
-      timeEl.textContent = 'Loading…';
-      boxes.orig.innerHTML = `<iframe src="${src(IDS.orig)}" allow="autoplay; fullscreen; picture-in-picture"></iframe>`;
-      boxes.ai.innerHTML   = `<iframe src="${src(IDS.ai)}" allow="autoplay; fullscreen; picture-in-picture"></iframe>`;
-      pO = new Vimeo.Player(boxes.orig.querySelector('iframe'));
-      pA = new Vimeo.Player(boxes.ai.querySelector('iframe'));
-      await Promise.all([pO.ready(), pA.ready()]);
-      duration = await pO.getDuration();
-      seek.max = duration;
-      timeEl.textContent = '0:00 / ' + fmt(duration);
-      await pA.setVolume(0);   // only the original carries sound
-
-      pO.on('timeupdate', async d => {
-        if(!seeking){ seek.value = d.seconds; timeEl.textContent = fmt(d.seconds) + ' / ' + fmt(duration); }
-        if(!playing) return;
-        const t = await pA.getCurrentTime();
-        if(Math.abs(t - d.seconds) > 0.25) pA.setCurrentTime(d.seconds);
-      });
-      pO.on('ended', () => { playing = false; pA.pause(); ui(); });
-      // If either video stalls to buffer, hold the other so they stay together
-      pO.on('bufferstart', () => { if(playing) pA.pause(); });
-      pO.on('bufferend',   () => { if(playing) pA.play(); });
-      pA.on('bufferstart', () => { if(playing) pO.pause(); });
-      pA.on('bufferend',   () => { if(playing) pO.play(); });
-
-      await startBoth();
-      busy = false;
-    }
-
     async function toggle(){
       if(busy) return;
-      if(!started){ await init(); return; }
       busy = true;
-      if(playing){
-        playing = false;
-        await Promise.all([pO.pause(), pA.pause()]);
-        ui();
-      } else {
-        await startBoth();
+      try{
+        await setup();
+        if(playing){
+          playing = false;
+          await Promise.all([pO.pause(), pA.pause()]);
+          ui();
+        } else {
+          await startBoth();
+        }
+      }catch(err){
+        showError(err);
+      }finally{
+        busy = false;
       }
-      busy = false;
     }
 
     overlay.addEventListener('click', toggle);
@@ -879,13 +901,15 @@
       timeEl.textContent = fmt(+seek.value) + ' / ' + fmt(duration);
     });
     seek.addEventListener('change', async () => {
-      if(started){ const t = +seek.value; await Promise.all([pO.setCurrentTime(t), pA.setCurrentTime(t)]); }
+      try{
+        if(pO && pA){ const t = +seek.value; await Promise.all([pO.setCurrentTime(t), pA.setCurrentTime(t)]); }
+      }catch(err){ showError(err); }
       seeking = false;
     });
 
     soundBtn.addEventListener('click', async () => {
       soundOn = !soundOn;
-      if(started) await pO.setVolume(soundOn ? 1 : 0);
+      try{ if(pO) await pO.setVolume(soundOn ? 1 : 0); }catch(e){}
       ui();
     });
 
