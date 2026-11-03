@@ -353,6 +353,51 @@
     .cmp-seek{ order:3; flex-basis:100%; }
   }
 
+
+  /* ---------- Motion poster carousel ---------- */
+  .mcar{ --mc-ratio:4 / 5; --mc-num:0.8; --mc-w:min(86%, calc(70vh * var(--mc-num))); }
+  .mcar-count{ font-family:var(--font-mono); font-size:12px; color:var(--text-faint); letter-spacing:.08em; }
+  .mcar-wrap{ position:relative; background:#000; border-radius:4px; overflow:hidden; padding:18px 0; }
+  .mcar-viewport{
+    display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory;
+    scrollbar-width:none; outline:none; -webkit-overflow-scrolling:touch;
+  }
+  .mcar-viewport::-webkit-scrollbar{ display:none; }
+  .mcar-viewport::before, .mcar-viewport::after{ content:''; flex:0 0 calc((100% - var(--mc-w)) / 2 - 6px); }
+  .mcar-slide{
+    flex:0 0 var(--mc-w); aspect-ratio:var(--mc-ratio); scroll-snap-align:center;
+    background:#0a0a0c; border-radius:4px; overflow:hidden; position:relative; cursor:pointer;
+    opacity:.45; transition:opacity .3s ease;
+  }
+  .mcar-slide.active{ opacity:1; }
+  .mcar-slide video{ width:100%; height:100%; object-fit:contain; display:block; }
+  .mcar-nav{
+    position:absolute; top:50%; transform:translateY(-50%); z-index:5;
+    width:44px; height:44px; border-radius:50%; border:1px solid rgba(255,255,255,.5);
+    background:rgba(0,0,0,.55); cursor:pointer; transition:border-color .2s ease, opacity .2s ease;
+  }
+  .mcar-nav:hover{ border-color:var(--amber); }
+  .mcar-nav:disabled{ opacity:.25; cursor:default; }
+  .mcar-nav::after{
+    content:''; position:absolute; top:50%; left:50%; width:9px; height:9px;
+    border-top:2px solid #fff; border-right:2px solid #fff;
+  }
+  .mcar-nav.prev{ left:14px; } .mcar-nav.next{ right:14px; }
+  .mcar-nav.prev::after{ transform:translate(-30%,-50%) rotate(-135deg); }
+  .mcar-nav.next::after{ transform:translate(-70%,-50%) rotate(45deg); }
+  .mcar-foot{ display:flex; justify-content:space-between; align-items:center; margin-top:16px; gap:16px; }
+  .mcar-dots{ display:flex; gap:8px; }
+  .mcar-dot{
+    width:28px; height:4px; border-radius:2px; border:0; padding:0; cursor:pointer;
+    background:var(--line); transition:background .2s ease;
+  }
+  .mcar-dot.active{ background:var(--amber); }
+  .mcar-label{ font-family:var(--font-mono); font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.06em; }
+  @media (max-width:860px){
+    .mcar-nav{ display:none; }
+    .mcar{ --mc-w:min(80%, calc(70vh * var(--mc-num))); }
+  }
+
   .work-note{
     margin-top:30px; font-family:var(--font-mono); font-size:12px; color:var(--text-faint);
     border-left:2px solid var(--line); padding-left:14px; max-width:640px;
@@ -551,6 +596,26 @@
           <input class="cmp-seek" id="cmpSeek" type="range" min="0" max="100" step="0.05" value="0" aria-label="Timeline">
           <span class="cmp-time" id="cmpTime">0:00 / 0:00</span>
           <button class="cmp-btn" id="cmpSound" type="button">Sound: On</button>
+        </div>
+      </div>
+
+      <!-- MOTION POSTER CAROUSEL: 6 slides, files in assets/video/motion-hiring-poster-01/ -->
+      <div class="work-feature mcar reveal" id="mcar">
+        <div class="feature-head">
+          <div>
+            <h3>Motion Hiring Poster</h3>
+            <div class="tag">Motion Graphics — 6-slide carousel</div>
+          </div>
+          <div class="mcar-count" id="mcCount">01 / 06</div>
+        </div>
+        <div class="mcar-wrap">
+          <button class="mcar-nav prev" id="mcPrev" type="button" aria-label="Previous slide"></button>
+          <div class="mcar-viewport" id="mcView" tabindex="0" aria-label="Motion poster carousel"></div>
+          <button class="mcar-nav next" id="mcNext" type="button" aria-label="Next slide"></button>
+        </div>
+        <div class="mcar-foot">
+          <div class="mcar-dots" id="mcDots"></div>
+          <div class="mcar-label" id="mcLabel">Main</div>
         </div>
       </div>
 
@@ -899,6 +964,122 @@
     });
 
     ui();
+  })();
+
+  // Motion poster carousel
+  (function(){
+    const FOLDER = 'assets/video/motion-hiring-poster-01/';
+    const SLIDES = [
+      { file:'01 WALKING HIRING 16-10-2026 - Main .mp4', label:'Main' },
+      { file:'02 WALKING HIRING 16-10-2026.mp4',         label:'Slide 02' },
+      { file:'03 WALKING HIRING 16-10-2026.mp4',         label:'Slide 03' },
+      { file:'04 WALKING HIRING 16-10-2026.mp4',         label:'Slide 04' },
+      { file:'05 WALKING HIRING 16-10-2026.mp4',         label:'Slide 05' },
+      { file:'06 WALKING HIRING 16-10-2026 - Contact.mp4', label:'Contact' }
+    ];
+    const root = document.getElementById('mcar');
+    if(!root) return;
+    const view = document.getElementById('mcView');
+    const dotsEl = document.getElementById('mcDots');
+    const countEl = document.getElementById('mcCount');
+    const labelEl = document.getElementById('mcLabel');
+    const prev = document.getElementById('mcPrev');
+    const next = document.getElementById('mcNext');
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const pad = n => String(n).padStart(2,'0');
+    let active = 0, visible = false, loaded = false, userPaused = false;
+
+    const slides = SLIDES.map((s, i) => {
+      const el = document.createElement('div');
+      el.className = 'mcar-slide' + (i === 0 ? ' active' : '');
+      const v = document.createElement('video');
+      v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'metadata';
+      v.setAttribute('playsinline', ''); v.setAttribute('muted', '');
+      v.setAttribute('aria-label', 'Motion poster ' + s.label);
+      if(reduce) v.controls = true;
+      el.appendChild(v);
+      view.appendChild(el);
+
+      const dot = document.createElement('button');
+      dot.type = 'button'; dot.className = 'mcar-dot' + (i === 0 ? ' active' : '');
+      dot.setAttribute('aria-label', 'Go to ' + s.label);
+      dot.addEventListener('click', () => goTo(i));
+      dotsEl.appendChild(dot);
+
+      el.addEventListener('click', () => {
+        if(i !== active){ goTo(i); return; }
+        if(reduce) return;
+        if(v.paused){ userPaused = false; v.play().catch(()=>{}); } else { userPaused = true; v.pause(); }
+      });
+      return { el, v, dot };
+    });
+
+    // Set the carousel shape from the real video size
+    slides[0].v.addEventListener('loadedmetadata', () => {
+      const w = slides[0].v.videoWidth, h = slides[0].v.videoHeight;
+      if(w && h){ root.style.setProperty('--mc-ratio', w + ' / ' + h); root.style.setProperty('--mc-num', w / h); }
+    });
+
+    function sync(){
+      slides.forEach((s, i) => {
+        if(reduce) return;
+        if(visible && i === active && !userPaused){ s.v.play().catch(()=>{}); }
+        else { s.v.pause(); }
+      });
+    }
+
+    function setActive(i){
+      if(i === active) return;
+      active = i; userPaused = false;
+      slides.forEach((s, k) => { s.el.classList.toggle('active', k === i); s.dot.classList.toggle('active', k === i); });
+      countEl.textContent = pad(i + 1) + ' / ' + pad(SLIDES.length);
+      labelEl.textContent = SLIDES[i].label;
+      prev.disabled = i === 0; next.disabled = i === SLIDES.length - 1;
+      slides[i].v.currentTime = 0;
+      sync();
+    }
+
+    function goTo(i){
+      i = Math.max(0, Math.min(SLIDES.length - 1, i));
+      const el = slides[i].el;
+      view.scrollTo({ left: el.offsetLeft - (view.clientWidth - el.clientWidth) / 2, behavior: reduce ? 'auto' : 'smooth' });
+    }
+
+    // Which slide is centred while swiping/scrolling
+    let ticking = false;
+    view.addEventListener('scroll', () => {
+      if(ticking) return; ticking = true;
+      requestAnimationFrame(() => {
+        ticking = false;
+        const mid = view.scrollLeft + view.clientWidth / 2;
+        let best = 0, bestD = Infinity;
+        slides.forEach((s, k) => {
+          const d = Math.abs(s.el.offsetLeft + s.el.clientWidth / 2 - mid);
+          if(d < bestD){ bestD = d; best = k; }
+        });
+        setActive(best);
+      });
+    }, { passive:true });
+
+    prev.addEventListener('click', () => goTo(active - 1));
+    next.addEventListener('click', () => goTo(active + 1));
+    view.addEventListener('keydown', e => {
+      if(e.key === 'ArrowRight'){ e.preventDefault(); goTo(active + 1); }
+      if(e.key === 'ArrowLeft'){ e.preventDefault(); goTo(active - 1); }
+    });
+    prev.disabled = true;
+
+    // Only load the files when the carousel is near the screen; only play while it is on screen
+    new IntersectionObserver(entries => {
+      entries.forEach(en => {
+        if(en.isIntersecting && !loaded){
+          loaded = true;
+          slides.forEach((s, i) => { s.v.src = encodeURI(FOLDER + SLIDES[i].file) + '#t=0.1'; });
+        }
+        visible = en.isIntersecting;
+        sync();
+      });
+    }, { rootMargin:'300px', threshold:0.15 }).observe(root);
   })();
 
   document.getElementById('year').textContent = new Date().getFullYear();
