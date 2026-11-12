@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -413,13 +413,6 @@
   .poster-item.loaded{ min-height:0; }
   .poster-item img{ width:100%; height:auto; display:block; transition:transform .5s ease; }
   .poster-item:hover img{ transform:scale(1.03); }
-  .poster-item figcaption{
-    position:absolute; left:0; right:0; bottom:0; padding:28px 14px 12px;
-    background:linear-gradient(to top, rgba(0,0,0,.8), transparent);
-    font-family:var(--font-mono); font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#fff;
-    opacity:0; transform:translateY(6px); transition:opacity .25s ease, transform .25s ease;
-  }
-  .poster-item:hover figcaption, .poster-item:focus-visible figcaption{ opacity:1; transform:none; }
   .poster-item:focus-visible{ outline:2px solid var(--amber); outline-offset:2px; }
   .poster-empty{ font-family:var(--font-mono); font-size:13px; color:var(--text-dim); border-left:2px solid var(--line); padding-left:14px; max-width:640px; }
 
@@ -449,8 +442,7 @@
   @media (max-width:860px){
     .poster-grid{ column-count:2; column-gap:12px; }
     .poster-item{ margin-bottom:12px; }
-    .poster-item figcaption{ opacity:1; transform:none; }
-    .lightbox{ padding:60px 12px; }
+      .lightbox{ padding:60px 12px; }
     .lb-prev, .lb-next{ top:auto; bottom:14px; margin-top:0; }
     .lb-cap{ bottom:70px; }
   }
@@ -1169,7 +1161,6 @@
     const lbCap = document.getElementById('lbCap');
     let names = [], cur = 0;
 
-    const title = n => n.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
     const url = n => DIR + encodeURIComponent(n);
     const natural = (a, b) => a.localeCompare(b, undefined, { numeric:true, sensitivity:'base' });
 
@@ -1187,13 +1178,13 @@
       const info = repoInfo();
       if(info){
         const key = 'ihsan-posters-' + info.owner + '/' + info.repo;
-        try{ const c = sessionStorage.getItem(key); if(c) return JSON.parse(c); }catch(e){}
+        try{ const c = JSON.parse(sessionStorage.getItem(key) || 'null'); if(c && Date.now() - c.t < 120000) return c.list; }catch(e){}
         try{
           const r = await fetch(`https://api.github.com/repos/${info.owner}/${info.repo}/contents/assets/posters`);
           if(r.ok){
             const data = await r.json();
             const list = data.filter(f => f.type === 'file' && IMG.test(f.name)).map(f => f.name).sort(natural);
-            try{ sessionStorage.setItem(key, JSON.stringify(list)); }catch(e){}
+            try{ sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), list })); }catch(e){}
             return list;
           }
         }catch(e){}
@@ -1203,16 +1194,21 @@
 
     function render(){
       grid.innerHTML = '';
-      names.forEach((n, i) => {
+      names.slice().forEach(n => {
         const fig = document.createElement('figure');
         fig.className = 'poster-item'; fig.tabIndex = 0;
         const img = new Image();
-        img.loading = 'lazy'; img.decoding = 'async'; img.alt = title(n); img.src = url(n);
+        img.loading = 'lazy'; img.decoding = 'async'; img.alt = 'Poster design'; img.src = url(n);
         img.addEventListener('load', () => fig.classList.add('loaded'));
-        const cap = document.createElement('figcaption'); cap.textContent = title(n);
-        fig.append(img, cap);
-        fig.addEventListener('click', () => open(i));
-        fig.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(i); } });
+        img.addEventListener('error', () => {          // file deleted or not published yet
+          names = names.filter(x => x !== n);
+          fig.remove();
+          countEl.textContent = names.length + (names.length === 1 ? ' poster' : ' posters');
+          if(!names.length){ emptyEl.hidden = false; emptyEl.textContent = 'No posters found yet. Upload images (.jpg, .png, .webp) to the assets/posters/ folder.'; countEl.textContent = ''; }
+        });
+        fig.append(img);
+        fig.addEventListener('click', () => open(names.indexOf(n)));
+        fig.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(names.indexOf(n)); } });
         grid.appendChild(fig);
       });
       countEl.textContent = names.length + (names.length === 1 ? ' poster' : ' posters');
@@ -1220,8 +1216,8 @@
 
     function show(i){
       cur = (i + names.length) % names.length;
-      lbImg.src = url(names[cur]); lbImg.alt = title(names[cur]);
-      lbCap.textContent = title(names[cur]) + '  ·  ' + (cur + 1) + ' / ' + names.length;
+      lbImg.src = url(names[cur]); lbImg.alt = 'Poster design';
+      lbCap.textContent = (cur + 1) + ' / ' + names.length;
     }
     function open(i){ show(i); lb.hidden = false; document.body.style.overflow = 'hidden'; document.getElementById('lbClose').focus(); }
     function close(){ lb.hidden = true; document.body.style.overflow = ''; lbImg.removeAttribute('src'); }
